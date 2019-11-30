@@ -1,4 +1,5 @@
-﻿using IoTSharp.Data;
+﻿using CrystalQuartz.AspNetCore;
+using IoTSharp.Data;
 using IoTSharp.Diagnostics;
 using IoTSharp.Extensions;
 using IoTSharp.Handlers;
@@ -15,16 +16,18 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.AspNetCore.SpaServices.VueCli;
 using Microsoft.AspNetCore.SpaServices.Webpack;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.Tokens;
 using MQTTnet.AspNetCore;
 using MQTTnet.AspNetCoreEx;
 using MQTTnet.Client;
 using NSwag.AspNetCore;
 using Quartz;
 using QuartzHostedService;
-using Quartzmin;
 using System;
 using System.Configuration;
 using System.IdentityModel.Tokens.Jwt;
@@ -54,29 +57,50 @@ namespace IoTSharp
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
-            services.Configure<CookiePolicyOptions>(options =>
-            {
-                // This lambda determines whether user consent for non-essential cookies is needed for a given request.
-                options.CheckConsentNeeded = context => true;
-                options.MinimumSameSitePolicy = SameSiteMode.None;
-            });
-            services.AddMvc().SetCompatibilityVersion(CompatibilityVersion.Version_2_2);
-            
-            // In production, the Angular files will be served from this directory
-            services.AddSpaStaticFiles(configuration =>
-            {
-                configuration.RootPath = "ClientApp/dist";
-            });
-            services.AddOptions();
             services.Configure((Action<AppSettings>)(setting =>
             {
                 Configuration.Bind(setting);
                 setting.MqttBroker = settings.MqttBroker;
                 setting.MqttClient = settings.MqttClient;
             }));
+            services.AddEntityFrameworkNpgsql();
+            services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(Configuration.GetConnectionString("IoTSharp")), ServiceLifetime.Transient);
+            services.AddIdentity<IdentityUser, IdentityRole>()
+                  .AddRoles<IdentityRole>()
+                  .AddRoleManager<RoleManager<IdentityRole>>()
+                 .AddDefaultTokenProviders()
+                  .AddEntityFrameworkStores<ApplicationDbContext>();
+
+            services.AddControllersWithViews();
+            services.AddCors();
+
+            services.AddAuthentication(option =>
+            {
+                option.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                option.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+
+            }).AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = false,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = Configuration["JwtIssuer"],
+                    ValidAudience = Configuration["JwtAudience"],
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Configuration["JwtKey"]))
+                };
+            });
+            // In production, the Angular files will be served from this directory
+            services.AddSpaStaticFiles(configuration =>
+            {
+                configuration.RootPath = "ClientApp/dist";
+            });
+       
           
             services.AddLogging(loggingBuilder => loggingBuilder.AddConsole());
-            services.AddIoTSharpHub(Configuration);
+          
             // Enable the Gzip compression especially for Kestrel
             services.Configure<GzipCompressionProviderOptions>(options => options.Level = System.IO.Compression.CompressionLevel.Optimal);
             services.AddResponseCompression(options =>
@@ -84,12 +108,8 @@ namespace IoTSharp
                     options.EnableForHttps = true;
                 });
 
-            services.AddIdentity<IdentityUser, IdentityRole>()
-                    .AddRoles<IdentityRole>()
-                    .AddRoleManager<RoleManager<IdentityRole>>()
-                   .AddDefaultTokenProviders()
-                    .AddEntityFrameworkStores<ApplicationDbContext>();
-            services.ConfigureJwtAuthentication(settings.JwtIssuer , settings.JwtAudience, settings.JwtKey, TimeSpan.FromDays(Convert.ToInt32(settings.JwtExpireDays)));
+          
+          
             services.Configure<ForwardedHeadersOptions>(options =>
             {
                 options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -106,19 +126,18 @@ namespace IoTSharp
             services.AddTransient<ApplicationDBInitializer>();
             services.AddIoTSharpMqttServer(settings.MqttBroker);
             services.AddMqttClient(settings.MqttClient);
-            services.AddHostedService<CoAPService>();
-            services.AddHostedService<MQTTMessageService>();
+      
             services.AddSingleton<DiagnosticsService>();
             services.AddSingleton<RetainedMessageHandler>();
             services.AddSingleton<RuntimeStatusHandler>();
- 
+
+            services.AddQuartzHostedService();
+
         }
 
-      
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
-        public void Configure(IApplicationBuilder app, IHostingEnvironment env)
+        public void Configure(IApplicationBuilder app, IWebHostEnvironment env, ISchedulerFactory factory)
         {
-        
             if (env.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
@@ -126,16 +145,32 @@ namespace IoTSharp
             }
             else
             {
-                app.UseExceptionHandler("/Error");
+                app.UseExceptionHandler("/Home/Error");
                 // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
                 app.UseHsts();
             }
-           
-            app.UseAuthentication();
-          
-            
-            app.UseSwagger();
             app.UseHttpsRedirection();
+            app.UseStaticFiles();
+
+            app.UseRouting();
+            app.UseCors(option => option
+            .AllowAnyOrigin()
+            .AllowAnyMethod()
+            .AllowAnyHeader());
+            app.UseAuthentication();
+            app.UseAuthorization();
+
+            app.UseDefaultFiles();
+            app.UseStaticFiles();
+
+            app.UseEndpoints(endpoints =>
+            {
+                endpoints.MapControllers();
+            });
+
+            app.UseSwaggerUi3();
+            app.UseOpenApi();
+            app.UseCrystalQuartz(() => factory.GetScheduler().Result);
             app.UseIotSharpMqttServer();
 
             app.UseForwardedHeaders(new ForwardedHeadersOptions
@@ -147,16 +182,8 @@ namespace IoTSharp
             // Idea: https://code.msdn.microsoft.com/How-to-fix-the-routing-225ac90f
             // This avoid having a real mvc view. You have other way of doing, but this one works
             // properly.
-            app.UseDefaultFiles();
-            app.UseStaticFiles();
             app.UseSpaStaticFiles();
-
-            app.UseMvc(routes =>
-            {
-                routes.MapRoute(
-                    name: "default",
-                    template: "{controller}/{action=Index}/{id?}");
-            });
+ 
            
             app.UseSpa(spa =>
             {

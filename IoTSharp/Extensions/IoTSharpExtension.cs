@@ -1,44 +1,36 @@
 ﻿using IoTSharp.Data;
+using IoTSharp.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MQTTnet.Diagnostics;
 using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace IoTSharp
 {
     public static class IoTSharpExtension
     {
-        public static void AddIoTSharpHub(this IServiceCollection services, IConfiguration configuration)
+
+
+        public static IHostBuilder ConfigureIoTSharpHost(this IHostBuilder hostBuilder)
         {
-            var _DataBase = configuration["DataBase"] ?? "sqlite";
-            var _ConnectionString = Environment.ExpandEnvironmentVariables(configuration.GetConnectionString(_DataBase) ?? "Data Source=%APPDATA%\\IoTSharp\\MQTTChat.db;Pooling=true;");
-            switch (_DataBase)
+            hostBuilder.ConfigureServices(services =>
             {
-                case "mssql":
-                    services.AddEntityFrameworkSqlServer();
-                    services.AddDbContext<ApplicationDbContext>(options => options.UseSqlServer(_ConnectionString), ServiceLifetime.Transient);
-                    break;
-                case "npgsql":
-                    services.AddEntityFrameworkNpgsql();
-                    services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(_ConnectionString), ServiceLifetime.Transient);
-                    break;
-                case "memory":
-                    services.AddEntityFrameworkInMemoryDatabase();
-                    services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(nameof(ApplicationDbContext)), ServiceLifetime.Transient);
-                    break;
-                case "sqlite":
-                default:
-                    services.AddEntityFrameworkSqlite();
-                    services.AddDbContext<ApplicationDbContext>(options => options.UseSqlite(_ConnectionString), ServiceLifetime.Transient);
-                    break;
-            }
+                services.AddHostedService<CoAPService>();
+                services.AddHostedService<MQTTMessageService>();
+            });
+            return hostBuilder;
         }
+
+      
 
         private static string GetFullPathName(string filename)
         {

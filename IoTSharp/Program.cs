@@ -4,24 +4,34 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using IoTSharp.Extensions;
-using Microsoft.AspNetCore;
+using IoTSharp.Extensions.AspNetCore;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
-using MQTTnet.AspNetCore;
+using Microsoft.Extensions.Hosting;
+using QuartzHostedService;
+
 namespace IoTSharp
 {
     public class Program
     {
+
         public static void Main(string[] args)
         {
-            CreateWebHostBuilder(args).Build().RunAsEnv();
+            CreateHostBuilder(args).Build().Run();
         }
 
-        public static IWebHostBuilder CreateWebHostBuilder(string[] args) =>
-            WebHost.CreateDefaultBuilder(args)
-                    .UseContentRootAsEnv()
-                    .UseStartup<Startup>();
+        public static IHostBuilder CreateHostBuilder(string[] args) =>
+            Host.CreateDefaultBuilder(args)
+                .ConfigureWindowsServices()
+                .ConfigureWebHostDefaults(webBuilder =>
+                {
+                    webBuilder.ConfigureKestrel(serverOptions =>
+                    {
+                        serverOptions.AllowSynchronousIO = true;
+                    });
+                    webBuilder.UseStartup<Startup>();
+                })
+                .ConfigureQuartzHost()
+                .ConfigureIoTSharpHost();
+
     }
 }
